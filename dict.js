@@ -136,7 +136,7 @@ function kanaPositions(text) {
 
 async function loadDict() {
   setStatus("辞書を読み込み中…");
-  const d = await (await fetch("dict.json")).json();
+  const d = await (await fetch("dict.json?v=45aea06e")).json();
   // 句読点も飾りかっこも1字として数え、そのまま表示する（build_dict.py と同じ）
   E = d.entries.map(([word, head, tail, text]) =>
     ({ word, head, tail, text, len: text.length, headLen: text.indexOf("】") + 1, ...kanaPositions(text) }));
