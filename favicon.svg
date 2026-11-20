@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Nagori のファビコン：縦書きの列を、上の波は上から・下の波は下から伸ばし、あいだの隙間が sin 波になる（作品と同じ形） -->
+  <rect width="32" height="32" rx="7" fill="#ffffff"/>
+  <g fill="#1e1e1e">
+    <rect x="26.42" y="4" width="1.16" height="10.92" rx="0.58"/>
+    <rect x="26.42" y="19.92" width="1.16" height="8.08" rx="0.58"/>
+    <rect x="24.42" y="4" width="1.16" height="13.39" rx="0.58"/>
+    <rect x="24.42" y="22.39" width="1.16" height="5.61" rx="0.58"/>
+    <rect x="22.42" y="4" width="1.16" height="14.81" rx="0.58"/>
+    <rect x="22.42" y="23.81" width="1.16" height="4.19" rx="0.58"/>
+    <rect x="20.42" y="4" width="1.16" height="14.81" rx="0.58"/>
+    <rect x="20.42" y="23.81" width="1.16" height="4.19" rx="0.58"/>
+    <rect x="18.42" y="4" width="1.16" height="13.39" rx="0.58"/>
+    <rect x="18.42" y="22.39" width="1.16" height="5.61" rx="0.58"/>
+    <rect x="16.42" y="4" width="1.16" height="10.92" rx="0.58"/>
+    <rect x="16.42" y="19.92" width="1.16" height="8.08" rx="0.58"/>
+    <rect x="14.42" y="4" width="1.16" height="8.08" rx="0.58"/>
+    <rect x="14.42" y="17.08" width="1.16" height="10.92" rx="0.58"/>
+    <rect x="12.42" y="4" width="1.16" height="5.61" rx="0.58"/>
+    <rect x="12.42" y="14.61" width="1.16" height="13.39" rx="0.58"/>
+    <rect x="10.42" y="4" width="1.16" height="4.19" rx="0.58"/>
+    <rect x="10.42" y="13.19" width="1.16" height="14.81" rx="0.58"/>
+    <rect x="8.42" y="4" width="1.16" height="4.19" rx="0.58"/>
+    <rect x="8.42" y="13.19" width="1.16" height="14.81" rx="0.58"/>
+    <rect x="6.42" y="4" width="1.16" height="5.61" rx="0.58"/>
+    <rect x="6.42" y="14.61" width="1.16" height="13.39" rx="0.58"/>
+    <rect x="4.42" y="4" width="1.16" height="8.08" rx="0.58"/>
+    <rect x="4.42" y="17.08" width="1.16" height="10.92" rx="0.58"/>
+  </g>
+</svg>
