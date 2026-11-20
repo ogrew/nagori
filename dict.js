@@ -24,6 +24,8 @@ params.shape = $("shape").value;
 $("shape").addEventListener("change", (e) => (params.shape = e.target.value));
 params.band = false;
 params.headEm = $("headEm").checked; // 既定でオン（HTML 側で checked）
+params.link = $("link").checked;     // しりとり線 SHIRITORI_LINE（既定でオン）
+$("link").addEventListener("change", (e) => (params.link = e.target.checked));
 $("band").addEventListener("change", (e) => (params.band = e.target.checked));
 $("headEm").addEventListener("change", (e) => (params.headEm = e.target.checked));
 // 設定は画面中央のオーバーレイ。H キー・設定ボタンで開閉、Esc・背景のクリックで閉じる。
@@ -275,6 +277,22 @@ const pulseAmount = (at, now) => {
   const t = (now - at) / PULSE_MS;
   return t < 0.6 ? 1 : 1 - (t - 0.6) / 0.4;
 };
+const LINK_MS = 350; // しりとり線が伸びきるまでの時間
+// 折れ線を、全長の frac（0〜1）まで描く
+function drawPath(c, pts, frac, color, alpha, width) {
+  const seg = pts.slice(1).map((q, j) => Math.hypot(q[0] - pts[j][0], q[1] - pts[j][1]));
+  let rest = seg.reduce((x, y) => x + y, 0) * frac;
+  c.save();
+  c.globalAlpha = alpha; c.strokeStyle = color; c.lineWidth = width; c.lineJoin = "miter"; c.lineCap = "butt";
+  c.beginPath(); c.moveTo(...pts[0]);
+  for (let j = 0; j < seg.length && rest > 0; j++) {
+    const t = Math.min(1, rest / (seg[j] || 1));
+    c.lineTo(pts[j][0] + (pts[j + 1][0] - pts[j][0]) * t, pts[j][1] + (pts[j + 1][1] - pts[j][1]) * t);
+    rest -= seg[j];
+  }
+  c.stroke();
+  c.restore();
+}
 const BAND = { red: "rgba(232, 52, 36, 0.14)", blue: "rgba(90, 135, 225, 0.16)" };
 
 // 縦書きの字形：句読点は右上に寄せ、かっこと長音は90度回し、小さいかなは少し右上に寄せる
@@ -388,6 +406,18 @@ function draw(c, W, H, now, live) {
         const color = params.headEm && k >= e.headLen ? muted : ink;
         const pulse = (k === e.headPos ? p : 0) || (k === e.tailPos ? q : 0);
         glyph(e.text[k], cx, y0 + (k + 0.5) * L.cell, color, pulse, a);
+      }
+      // しりとり線（SHIRITORI_LINE）：前の列（右）の尻のかなの左側から、列のあいだの隙間を通って、この列の頭のかなの右側へ（鍵の手）。
+      // 頭のかなが書かれた瞬間から、尻のかな側から伸びていく（スクリーンショットでは伸びきった形）
+      const prevRow = s.rows[i - 1];
+      if (params.link && row.chained && prevRow && !prevRow.blank && shown > e.headPos) {
+        const pe = E[prevRow.i];
+        const pxr = colRight(L, i - 1), pcx = pxr - L.pitch / 2;
+        const py0 = s.side === "red" ? L.top : L.bottom - pe.len * L.cell;
+        const yT = py0 + (pe.tailPos + 0.5) * L.cell, yH = y0 + (e.headPos + 0.5) * L.cell;
+        const xA = pcx - L.cell * 0.5, xD = cx + L.cell * 0.5, xM = (xA + xD) / 2;
+        const grow = live && row.pulseAt !== null ? Math.min(1, (now - row.pulseAt) / LINK_MS) : 1;
+        drawPath(c, [[xA, yT], [xM, yT], [xM, yH], [xD, yH]], grow, ink, Math.min(a, colAlpha(pxr)), Math.max(1, L.cell * 0.06));
       }
       // カーソル（点滅）
       if (live && running && i === Math.floor(state.progress) && Math.floor(now / 500) % 2 === 0 && shown < len) {
