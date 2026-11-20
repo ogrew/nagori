@@ -41,6 +41,8 @@
   #credit { font-size: 10px; color: #aaa; line-height: 1.4; margin-top: 6px; }
   #credit a { color: inherit; }
   #log { display: none; }
+  #panel .r.off { color: #bbb; }
+  #panel input:disabled { opacity: .35; cursor: default; }
 </style>
 </head>
 <body>
@@ -78,11 +80,19 @@
     <div class="r"><span>RESET</span><button id="reset">RESET</button><span></span></div>
   </section>
   <section>
-    <div class="sec">COLOR</div>
+    <div class="sec">STYLE</div>
     <div class="r"><span>INK</span><input id="inkColor" type="color" value="#1e1e1e"><span class="v"></span></div>
     <div class="r"><span>BG</span><input id="bgColor" type="color" value="#ffffff"><span class="v"></span></div>
     <div class="r"><span>HEAD_EM</span><input id="headEm" type="checkbox" checked><span></span></div>
+    <div class="r"><span>BRACKET</span>
+      <select id="bracket">
+        <option value="【】" selected>【】</option>
+        <option value="《》">《》</option>
+        <option value="「」">「」</option>
+        <option value="『』">『』</option>
+      </select><span></span></div>
     <div class="r"><span>SHIRITORI_LINE</span><input id="link" type="checkbox" checked><span></span></div>
+    <div class="r"><span>LINE_COLOR</span><input id="lineColor" type="color" value="#1e1e1e"><span class="v"></span></div>
     <div class="r"><span>GUIDE</span><input id="band" type="checkbox"><span></span></div>
   </section>
   <section>
@@ -91,6 +101,6 @@
     <div id="log"></div>
   </section>
 </div>
-<script type="module" src="dict.js?v=d8e3fd84"></script>
+<script type="module" src="dict.js?v=ac4ca33c"></script>
 </body>
 </html>

@@ -25,7 +25,16 @@ $("shape").addEventListener("change", (e) => (params.shape = e.target.value));
 params.band = false;
 params.headEm = $("headEm").checked; // 既定でオン（HTML 側で checked）
 params.link = $("link").checked;     // しりとり線 SHIRITORI_LINE（既定でオン）
-$("link").addEventListener("change", (e) => (params.link = e.target.checked));
+// しりとり線の色（LINE_COLOR）は、しりとり線がオンのときだけ変えられる
+const syncLink = () => {
+  params.link = $("link").checked;
+  $("lineColor").disabled = !params.link;
+  $("lineColor").closest(".r").classList.toggle("off", !params.link);
+};
+$("link").addEventListener("change", syncLink);
+// 見出しの飾りかっこ（BRACKET）：辞書の文は【】で持ち、表示のときだけ選んだかっこに置き換える（どれも1字なので字数は変わらない）
+params.bracket = $("bracket").value;
+$("bracket").addEventListener("change", (e) => (params.bracket = e.target.value));
 $("band").addEventListener("change", (e) => (params.band = e.target.checked));
 $("headEm").addEventListener("change", (e) => (params.headEm = e.target.checked));
 // 設定は画面中央のオーバーレイ。H キー・設定ボタンで開閉、Esc・背景のクリックで閉じる。
@@ -57,7 +66,7 @@ document.addEventListener("keydown", (ev) => {
 function applyColors() {
   $("stage").style.background = params.bgColor;
 }
-for (const id of ["inkColor", "bgColor"]) {
+for (const id of ["inkColor", "bgColor", "lineColor"]) {
   const el = $(id), out = el.parentElement.querySelector(".v");
   try { const saved = localStorage.getItem(`shapetext.${id}`); if (saved) el.value = saved; } catch {}
   const sync = () => {
@@ -67,6 +76,7 @@ for (const id of ["inkColor", "bgColor"]) {
   };
   el.addEventListener("input", sync); sync();
 }
+syncLink();
 // 2色を混ぜる（「語釈を薄く」用）
 function mix(a, b, t) {
   const p = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
@@ -296,7 +306,7 @@ function drawPath(c, pts, frac, color, alpha, width) {
 const BAND = { red: "rgba(232, 52, 36, 0.14)", blue: "rgba(90, 135, 225, 0.16)" };
 
 // 縦書きの字形：句読点は右上に寄せ、かっこと長音は90度回し、小さいかなは少し右上に寄せる
-const ROTATE = new Set([..."【】（）ー〜－―…"]);
+const ROTATE = new Set([..."【】《》「」『』（）ー〜－―…"]); // かっこは90度回すと縦書きの形・位置になる
 const SMALL_KANA = new Set([..."ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ"]);
 const PUNCT = new Set([..."、。，．"]);
 
@@ -405,7 +415,8 @@ function draw(c, W, H, now, live) {
       for (let k = 0; k < shown; k++) {
         const color = params.headEm && k >= e.headLen ? muted : ink;
         const pulse = (k === e.headPos ? p : 0) || (k === e.tailPos ? q : 0);
-        glyph(e.text[k], cx, y0 + (k + 0.5) * L.cell, color, pulse, a);
+        const ch = k === 0 ? params.bracket[0] : k === e.headLen - 1 ? params.bracket[1] : e.text[k];
+        glyph(ch, cx, y0 + (k + 0.5) * L.cell, color, pulse, a);
       }
       // しりとり線（SHIRITORI_LINE）：前の列（右）の尻のかなの左側から、列のあいだの隙間を通って、この列の頭のかなの右側へ（鍵の手）。
       // 頭のかなが書かれた瞬間から、尻のかな側から伸びていく（スクリーンショットでは伸びきった形）
@@ -417,7 +428,7 @@ function draw(c, W, H, now, live) {
         const yT = py0 + (pe.tailPos + 0.5) * L.cell, yH = y0 + (e.headPos + 0.5) * L.cell;
         const xA = pcx - L.cell * 0.5, xD = cx + L.cell * 0.5, xM = (xA + xD) / 2;
         const grow = live && row.pulseAt !== null ? Math.min(1, (now - row.pulseAt) / LINK_MS) : 1;
-        drawPath(c, [[xA, yT], [xM, yT], [xM, yH], [xD, yH]], grow, ink, Math.min(a, colAlpha(pxr)), Math.max(1, L.cell * 0.06));
+        drawPath(c, [[xA, yT], [xM, yT], [xM, yH], [xD, yH]], grow, params.lineColor, Math.min(a, colAlpha(pxr)), Math.max(1, L.cell * 0.06));
       }
       // カーソル（点滅）
       if (live && running && i === Math.floor(state.progress) && Math.floor(now / 500) % 2 === 0 && shown < len) {
