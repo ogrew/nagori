@@ -10,7 +10,7 @@ const $ = (id) => document.getElementById(id);
 
 // ---------- 設定 ----------
 const params = {};
-for (const id of ["minLen", "maxLen", "period", "margin", "size", "leading", "gap", "speed"]) {
+for (const id of ["minLen", "maxLen", "period", "margin", "size", "leading", "gap", "speed", "nEnd"]) {
   const el = $(id), out = el.parentElement.querySelector(".v");
   const sync = () => { params[id] = Number(el.value); out.textContent = el.value; };
   el.addEventListener("input", sync); sync();
@@ -146,7 +146,7 @@ function kanaPositions(text) {
 
 async function loadDict() {
   setStatus("辞書を読み込み中…");
-  const d = await (await fetch("dict.json?v=45aea06e")).json();
+  const d = await (await fetch("dict.json?v=1cef2bca")).json();
   // 句読点も飾りかっこも1字として数え、そのまま表示する（build_dict.py と同じ）
   E = d.entries.map(([word, head, tail, text]) =>
     ({ word, head, tail, text, len: text.length, headLen: text.indexOf("】") + 1, ...kanaPositions(text) }));
@@ -173,11 +173,21 @@ const rowLen = (row) => (!row || row.blank ? 0 : E[row.i].len);
 // 前の項目の尻のかなで始まり、目標の字数ぴったりで、まだ使っていない項目から選ぶ。
 // 次の2行で詰まりにくい（尻のかなで始まる項目が多い）ものを優先する。
 // 無ければ字数を ±1、±2 までゆるめ、それでも無ければ使った項目も許す（緊急時は同じ語でよい）。
+// 「ん」で終わる語は、N_END（%）の確率のときだけ選ぶ（しりとりがそこで終わり、1列あけて別のかなから再開する）。
+// それ以外のときは「ん」で終わる語を候補から外す（辞書の17%が「ん」終わりなので、外さないと頻繁に終わりすぎる）
 function chain(s, prev, r) {
   const t = target(r, s.side);
+  if (Math.random() * 100 < params.nEnd) {
+    for (const d of [0, 1, -1, 2, -2]) {
+      const ends = (inv.get(key(prev.tail, t + d)) || []).filter((i) => E[i].tail === "ん" && !s.used.has(i));
+      if (!ends.length) continue;
+      if (d === 0) s.exact++; else if (Math.abs(d) === 1) s.off1++; else s.off2++;
+      return ends[Math.floor(Math.random() * ends.length)];
+    }
+  }
   const tries = [[0, false], [1, false], [-1, false], [2, false], [-2, false], [0, true], [1, true], [-1, true], [2, true], [-2, true]];
   for (const [d, reuse] of tries) {
-    const list = inv.get(key(prev.tail, t + d)) || [];
+    const list = (inv.get(key(prev.tail, t + d)) || []).filter((i) => E[i].tail !== "ん");
     const cands = reuse ? list : list.filter((i) => !s.used.has(i));
     if (!cands.length) continue;
     const scored = cands.map((i) => [i, Math.min(stockOf(E[i].tail, target(r + 1, s.side)), stockOf(E[i].tail, target(r + 2, s.side)))]);
@@ -194,7 +204,7 @@ function chain(s, prev, r) {
 function fresh(s, r) {
   const t = target(r, s.side);
   for (const d of [0, 1, -1, 2, -2]) {
-    const unused = (byLen.get(t + d) || []).filter((i) => !s.used.has(i));
+    const unused = (byLen.get(t + d) || []).filter((i) => !s.used.has(i) && E[i].tail !== "ん"); // 始めからすぐ終わらないように
     if (unused.length) return unused[Math.floor(Math.random() * unused.length)];
   }
   return Math.floor(Math.random() * E.length);
@@ -251,7 +261,8 @@ function shownIn(s, i) {
 function updateStatus() {
   const f = fitNow();
   const exact = streams.map((s) => `${s.side.toUpperCase()} ${Math.round((100 * s.exact) / (s.exact + s.off1 + s.off2 || 1))}%`).join(" ");
-  setStatus(`LEN ${f.lo}–${f.hi}  GAP ${f.gap}${f.shrunk ? "  (FIT)" : ""}\nEXACT ${exact}  COLS ${state.rowBase + rowCount()}`);
+  const ends = streams.map((s) => `${s.side.toUpperCase()} ${s.restarts}`).join(" ");
+  setStatus(`LEN ${f.lo}–${f.hi}  GAP ${f.gap}${f.shrunk ? "  (FIT)" : ""}\nEXACT ${exact}  COLS ${state.rowBase + rowCount()}\nRESTART ${ends}`);
 }
 
 // ---------- 開始・停止 ----------
