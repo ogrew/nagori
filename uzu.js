@@ -21,9 +21,17 @@ $("headEm").addEventListener("change", (e) => (params.headEm = e.target.checked)
 params.bracket = $("bracket").value;
 $("bracket").addEventListener("change", (e) => (params.bracket = e.target.value));
 params.guide = $("band").checked;
+// しりとり線（SHIRITORI_LINE、既定オン）。線の色（LINE_COLOR）はオンのときだけ変えられる
+params.link = $("link").checked;
+const syncLink = () => {
+  params.link = $("link").checked;
+  $("lineColor").disabled = !params.link;
+  $("lineColor").closest(".r").classList.toggle("off", !params.link);
+};
+$("link").addEventListener("change", syncLink);
 $("band").addEventListener("change", (e) => (params.guide = e.target.checked));
 $("mode").addEventListener("change", (e) => (location.href = e.target.value));
-for (const id of ["inkColor", "bgColor"]) {
+for (const id of ["inkColor", "bgColor", "lineColor"]) {
   const el = $(id);
   try { const saved = localStorage.getItem(`shapetext.${id}`); if (saved) el.value = saved; } catch {}
   const sync = () => {
@@ -33,6 +41,7 @@ for (const id of ["inkColor", "bgColor"]) {
   };
   el.addEventListener("input", sync); sync();
 }
+syncLink();
 function mix(a, b, t) {
   const p = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
   const [x, y] = [p(a), p(b)];
@@ -112,7 +121,7 @@ function makeGeo() {
     for (let n = 0; n < 8; n++) phi -= (S(phi) - s) / Math.hypot(r0 + b * phi, b);
     return phi;
   };
-  return { b, r0, split: params.split, S, phiAt };
+  return { b, r0, pitch: params.lineSpace, split: params.split, S, phiAt };
 }
 // φ での位置と進む向き（時計回り：画面の y は下向きなので、φ が増えると時計回り）
 function pointAt(phi) {
@@ -204,7 +213,7 @@ function planHalfTurn() {
     for (let j = 0; j < E[p.i].len; j++, s += sp) {
       phi = geo.phiAt(s, phi);
       const pt = pointAt(phi);
-      state.chars.push({ x: pt.x, y: pt.y, r: pt.r, ang: pt.ang, w, j });
+      state.chars.push({ x: pt.x, y: pt.y, r: pt.r, phi, ang: pt.ang, w, j });
     }
   }
   state.halfTurns++;
@@ -289,28 +298,92 @@ function newBake(cellScale, R, dpr) {
   const half = Math.ceil((R / REBAKE_AT) * 1.1 + cellScale * 2); // この先 REBAKE_AT まで縮むあいだに増える外周も入る大きさ
   const cv = document.createElement("canvas");
   cv.width = cv.height = Math.ceil(2 * half * dpr);
-  return { canvas: cv, ctx: cv.getContext("2d"), scale: cellScale, half, R, upto: 0, dpr };
+  return { canvas: cv, ctx: cv.getContext("2d"), scale: cellScale, half, R, upto: 0, linkUpto: 1, dpr };
 }
 // 焼き付けを進める。どの描き足しも1フレームに BAKE_PER_FRAME 字まで（一度に全部描くと止まって見える）
-function bakeStep(b, target) {
-  if (b.upto >= target) return;
-  const to = Math.min(target, b.upto + BAKE_PER_FRAME);
-  drawChars(b.ctx, b.upto, to, b.half, b.half, b.scale, b.dpr, 1);
-  b.upto = to;
+function bakeStep(b, target, now) {
+  if (b.upto < target) {
+    const to = Math.min(target, b.upto + BAKE_PER_FRAME);
+    drawChars(b.ctx, b.upto, to, b.half, b.half, b.scale, b.dpr, 1);
+    b.upto = to;
+  }
+  // しりとり線は、頭のかなが焼き付け済みで、伸びきったものから焼く（語の順に）
+  while (b.linkUpto < state.words.length) {
+    const wd = state.words[b.linkUpto];
+    if (wd.start + E[wd.i].headPos >= b.upto) break;
+    if (wd.pulseAt !== null && now - wd.pulseAt < LINK_MS) break;
+    if (params.link && wd.chained) drawLink(b.ctx, b.linkUpto, b.half, b.half, b.scale, b.dpr, 1, 1);
+    b.linkUpto++;
+  }
 }
-function updateBake(W, H, dpr) {
+function updateBake(W, H, dpr, now) {
   // 色・かっこ・見出しの濃さ・渦の形が変わったら作り直す（窓の大きさは含めない：大きさが変わるたびに作り直すと重い）
-  const key = [params.inkColor, params.bgColor, params.bracket, params.headEm, dpr, geo && geo.b].join("|");
+  const key = [params.inkColor, params.bgColor, params.bracket, params.headEm, params.link, params.lineColor, dpr, geo && geo.b].join("|");
   const R = Math.min(W, H) / 2;
   const target = Math.max(0, Math.floor(state.shown) - LIVE);
   if (!bake || key !== bakeKey || target < bake.upto) { bakeKey = key; bake = newBake(scale, R, dpr); nextBake = null; }
-  bakeStep(bake, target);
+  bakeStep(bake, target, now);
   // 縮んで画像が粗くなる手前、または窓が焼いたときより大きくなったら、いまの縮尺で焼き直す（できるまでは今の画像を使う）
   if (!nextBake && (scale < bake.scale * REBAKE_AT || R > bake.R * 1.05)) nextBake = newBake(scale, R, dpr);
   if (nextBake) {
-    bakeStep(nextBake, target);
+    bakeStep(nextBake, target, now);
     if (nextBake.upto >= target) { bake = nextBake; nextBake = null; }
   }
+}
+
+// ---------- しりとり線（SHIRITORI_LINE） ----------
+// どの語どうしも同じ決まりでつなぐ：前の語の尻のかなの下（渦の内側）から、内側の巻きとのすき間に入り、
+// すき間に沿って渦と同じ向きに進み、次の語の頭のかなの下へ上がる。すき間は字の並ぶ巻きと巻きのあいだなので、ほかの字にぶつからない。
+// 中心を横切る区切り（φ＝kπ）は、線はそのまま通る（途切れさせない。ユーザーの指示）
+const LINK_MS = 450;  // 線が伸びきるまでの時間
+const LINK_STEP = 0.3; // すき間に沿って点を置く間隔（字）
+function linkPath(w) {
+  const wd = state.words[w];
+  if (wd.link) return wd.link;
+  const pw = state.words[w - 1], e = E[wd.i], pe = E[pw.i];
+  const T = state.chars[pw.start + pe.tailPos], Hd = state.chars[wd.start + e.headPos];
+  const BOTTOM = 0.45;                                           // 字の中心から字の下（内側）まで
+  const rc = (phi) => geo.r0 + geo.b * phi - geo.pitch / 2;      // すき間の中心の半径
+  const at = (phi, r) => [r * Math.cos(phi), r * Math.sin(phi)];
+  const lines = [];
+  let cur = [at(T.phi, T.r - BOTTOM)];
+  for (let phi = T.phi; ; ) {
+    cur.push(at(phi, rc(phi)));
+    if (phi >= Hd.phi) break;
+    phi = Math.min(Hd.phi, phi + LINK_STEP / Math.max(0.5, rc(phi)));
+  }
+  cur.push(at(Hd.phi, Hd.r - BOTTOM));
+  lines.push(cur);
+  // 長さ（伸びる動きのため）
+  wd.link = lines.map((pts) => {
+    let len = 0;
+    for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    return { pts, len };
+  });
+  return wd.link;
+}
+// 語 w の線を、全長の grow（0〜1）まで描く
+function drawLink(c, w, ox, oy, cell, dpr, alpha, grow) {
+  const parts = linkPath(w);
+  let rest = parts.reduce((a, p) => a + p.len, 0) * grow;
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.globalAlpha = alpha;
+  c.strokeStyle = params.lineColor;
+  c.lineWidth = Math.max(1, cell * 0.06);
+  c.lineJoin = "round"; c.lineCap = "butt";
+  for (const { pts } of parts) {
+    if (rest <= 0) break;
+    c.beginPath();
+    c.moveTo(ox + pts[0][0] * cell, oy + pts[0][1] * cell);
+    for (let i = 1; i < pts.length && rest > 0; i++) {
+      const seg = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      const t = Math.min(1, rest / (seg || 1));
+      c.lineTo(ox + (pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t) * cell, oy + (pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t) * cell);
+      rest -= seg;
+    }
+    c.stroke();
+  }
+  c.globalAlpha = 1;
 }
 
 // しりとりの強調を上から重ねる（白黒反転）。焼き付けた字にも効く
@@ -363,7 +436,14 @@ function draw(c, W, H, now, live, dpr) {
   }
 
   const n = Math.floor(state.shown);
-  if (!live) { drawChars(c, 0, n, cx, cy, cell, dpr, 1); return; }
+  if (!live) {
+    drawChars(c, 0, n, cx, cy, cell, dpr, 1);
+    if (params.link) for (let w = 1; w < state.words.length; w++) {
+      const wd = state.words[w];
+      if (wd.chained && wd.start + E[wd.i].headPos < n) drawLink(c, w, cx, cy, cell, dpr, 1, 1);
+    }
+    return;
+  }
 
   // 頭のかなが書かれた語に、強調の始まりの時刻を付ける
   for (let w = state.words.length - 1; w >= 0; w--) {
@@ -372,7 +452,7 @@ function draw(c, W, H, now, live, dpr) {
     if (wd.chained && wd.pulseAt === null && n > wd.start + E[wd.i].headPos) wd.pulseAt = now;
   }
   // 焼き付けた画像をいまの縮尺で貼り、最新の字だけ1字ずつ描く
-  updateBake(W, H, dpr);
+  updateBake(W, H, dpr, now);
   const k = cell / bake.scale;
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.globalAlpha = alpha;
@@ -380,6 +460,13 @@ function draw(c, W, H, now, live, dpr) {
   c.setTransform(dpr, 0, 0, dpr, 0, 0);
   // 最新の LIVE 字だけ1字ずつ描く。色を変えた直後などで焼き付けが追いついていない古い字は、焼けるまで一時的に出ない（重くしないため）
   drawChars(c, Math.max(bake.upto, n - LIVE), n, cx, cy, cell, dpr, alpha);
+  if (params.link) {
+    for (let w = bake.linkUpto; w < state.words.length; w++) {
+      const wd = state.words[w];
+      if (wd.start + E[wd.i].headPos >= n) break;
+      if (wd.chained) drawLink(c, w, cx, cy, cell, dpr, alpha, wd.pulseAt === null ? 1 : Math.min(1, (now - wd.pulseAt) / LINK_MS));
+    }
+  }
   if (cell >= 3) drawPulses(c, cx, cy, cell, dpr, alpha, now);
 
   // カーソル（点滅）
