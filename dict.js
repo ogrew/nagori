@@ -52,6 +52,7 @@ function showPanel(on) {
 }
 const panelOpen = () => !$("panel").classList.contains("hidden");
 $("toggle").addEventListener("click", () => showPanel(!panelOpen()));
+$("mode").addEventListener("change", (e) => (location.href = e.target.value)); // WAVE ⇄ UZU（渦）
 $("backdrop").addEventListener("click", () => showPanel(false));
 document.addEventListener("keydown", (ev) => {
   if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.repeat) return;
