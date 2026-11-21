@@ -1,26 +1,30 @@
-// Nagori / Uzu：辞書の項目（【見出し（よみ）】語釈。）を渦巻きに沿って並べ、見出しをよみのしりとりでつなぐ。
-// 渦はアルキメデスの渦巻き r = r0 + bφ（時計回り、中心から外へ）。半周ごと（φ = kπ、横の中心線）に語がちょうど終わるよう、
-// 半周に入る字数に合わせて語を選ぶ。内側は1語、外側（70字を超える半周）は複数の語で埋める。
-// 字の間隔を半周ごとにわずかに伸び縮みさせて、どの半周も中心線の手前でぴったり止める → 中心を横切る区切りが見える。
-// 字は横書きの向きのまま、進む方向（接線）に合わせて1字ずつ回す（字の頭は外側）。
-// 書くにつれて渦全体が縮み、字が MIN_SIZE より小さくなったらフェードして中心からやり直す。
-// 座標は「字1つ＝1」の世界座標で持ち、描くときに縮尺 scale（px/字）をかける。
+// Nagori / Uzu（渦）：辞書の項目（【見出し（よみ）】語釈。）を渦巻きに沿って並べ、見出しをよみのしりとりでつなぐ。
+// 渦はアルキメデスの渦巻き r = r0 + bφ。半周ごと（φ = kπ、横の中心線）に語がちょうど終わるよう、半周に入る字数に合わせて語を選ぶ。
+// 字の大きさは FONT_SIZE で固定。画面（余白の内側の円）に収まる半周までが1往復の範囲。
+// 中心から外周へ（時計回り）書き、外周まで来たら同じ半周を逆にたどって中心へ戻る（反時計回り）。これを往復する（Kuruwa と同じ）。
+// 往復の折り返しでは端の半周をもう一度書かない（外へ：0..n-1、内へ：n-2..0、外へ：1..n-1 …）ので、しりとりは切れずにつながる。
+// 画面は消さない。新しい周回の字は、前の周回の字を半周ごとに上書きする（書いている半周では、カーソルより先に前の字が残る）。
+// 前の周回の字は OLD_ALPHA の濃さで描く → 書き換わる場所が内↔外を往復して見える。
+// 字の間隔を半周ごとに 0.9〜1.15 字で伸び縮みさせ、どの半周も中心線の手前でぴったり止める → 中心を横切る区切りが見える。
+// 字は進む方向（接線）に合わせて1字ずつ回す（外へ向かう周回は字の頭が外側、内へ向かう周回は内側）。
+// 座標は「字1つ＝1」の世界座標（画面の中心が原点）で持ち、描くときに cell（px/字）をかける。
 const $ = (id) => document.getElementById(id);
 
 // ---------- 設定 ----------
 const params = {};
-for (const id of ["lineSpace", "split", "size", "minSize", "margin", "speed"]) {
+for (const id of ["lineSpace", "split", "size", "margin", "speed", "oldAlpha"]) {
   const el = $(id), out = el.parentElement.querySelector(".v");
   const sync = () => { params[id] = Number(el.value); out.textContent = el.value; };
   el.addEventListener("input", sync); sync();
 }
-// 渦の形（巻きの間隔・区切りの幅）を変えたら最初から（途中で変えると渦がつながらない）
-for (const id of ["lineSpace", "split"]) $(id).addEventListener("change", () => reset());
+// 形（巻きの間隔・区切り・字の大きさ・余白）を変えたら最初から
+for (const id of ["lineSpace", "split", "size", "margin"]) $(id).addEventListener("change", () => reset());
 params.headEm = $("headEm").checked;
 $("headEm").addEventListener("change", (e) => (params.headEm = e.target.checked));
 params.bracket = $("bracket").value;
 $("bracket").addEventListener("change", (e) => (params.bracket = e.target.value));
 params.guide = $("band").checked;
+$("band").addEventListener("change", (e) => (params.guide = e.target.checked));
 // しりとり線（SHIRITORI_LINE、既定オン）。線の色（LINE_COLOR）はオンのときだけ変えられる
 params.link = $("link").checked;
 const syncLink = () => {
@@ -29,7 +33,6 @@ const syncLink = () => {
   $("lineColor").closest(".r").classList.toggle("off", !params.link);
 };
 $("link").addEventListener("change", syncLink);
-$("band").addEventListener("change", (e) => (params.guide = e.target.checked));
 $("mode").addEventListener("change", (e) => (location.href = e.target.value));
 for (const id of ["inkColor", "bgColor", "lineColor"]) {
   const el = $(id);
@@ -92,7 +95,7 @@ function kanaPositions(text) {
 async function loadDict() {
   setStatus("LOADING…");
   const d = await (await fetch("dict.json?v=1cef2bca")).json();
-  // 試作では「ん」で終わる語は使わない（渦の上で1語ぶん空ける処理はまだ無い）
+  // 「ん」で終わる語は使わない（Uzu と同じ）
   E = d.entries.filter((x) => x[2] !== "ん").map(([word, head, tail, text]) =>
     ({ word, head, tail, text, len: text.length, headLen: text.indexOf("】") + 1, ...kanaPositions(text) }));
   E.forEach((e, i) => {
@@ -106,11 +109,15 @@ async function loadDict() {
   $("credit").innerHTML = `${d.source}。<a href="https://ja.wiktionary.org/" target="_blank" rel="noopener">ja.wiktionary.org</a> / <a href="https://kaikki.org/" target="_blank" rel="noopener">kaikki.org</a>`;
 }
 
-// ---------- 渦の形（世界座標、字1つ＝1） ----------
-// r = r0 + bφ。巻きの間隔（1周で増える半径）＝ LINE_SPACE、b ＝ LINE_SPACE / 2π。
-// 弧の長さ S(φ) は閉じた式で求め、弧の長さ → φ はニュートン法で逆に解く
+// ---------- 渦の形 ----------
+// r = r0 + bφ（画面の y は下向きなので、φ が増えると時計回り）。巻きの間隔（1周で増える半径）＝ LINE_SPACE、b ＝ LINE_SPACE / 2π。
+// 弧の長さ S(φ) は閉じた式で求め、弧の長さ → φ はニュートン法で逆に解く。
+// 半周 k は φ = kπ〜(k+1)π。字（外側の縁）が余白の内側の円に収まる半周まで使う
 let geo = null;
-function makeGeo() {
+function makeGeo(W, H) {
+  const m = Math.round(Math.min(W, H) * params.margin / 100);
+  const cell = params.size;
+  const Rmax = (Math.min(W, H) / 2 - m) / cell;
   const b = params.lineSpace / (2 * Math.PI);
   // 最初の半周に約12字が入るように、最初の半径を決める（それより内側は項目が入らないので空ける）
   const r0 = Math.max(1.5, (12 + params.split) / Math.PI - (b * Math.PI) / 2);
@@ -121,21 +128,44 @@ function makeGeo() {
     for (let n = 0; n < 8; n++) phi -= (S(phi) - s) / Math.hypot(r0 + b * phi, b);
     return phi;
   };
-  return { b, r0, pitch: params.lineSpace, split: params.split, S, phiAt };
+  const halves = [];
+  for (let k = 0; k < 2000 && r0 + b * (k + 1) * Math.PI + 0.5 <= Rmax; k++) halves.push({ k, s0: S(k * Math.PI), s1: S((k + 1) * Math.PI) });
+  return { W, H, cell, ox: W / 2, oy: H / 2, Rmax, b, r0, pitch: params.lineSpace, split: params.split, S, phiAt, halves };
 }
-// φ での位置と進む向き（時計回り：画面の y は下向きなので、φ が増えると時計回り）
+// φ での位置と、φ が増える向きの接線の角度
 function pointAt(phi) {
   const r = geo.r0 + geo.b * phi;
   const c = Math.cos(phi), s = Math.sin(phi);
   return { x: r * c, y: r * s, r, ang: Math.atan2(geo.b * s + r * c, geo.b * c - r * s) };
 }
+// 周回 r で書く半周の順番：外へ 0..n-1、内へ n-2..0、外へ 1..n-1、内へ n-2..0 …（折り返しの半周は続けて2回書かない）
+function roundSeq(r, n) {
+  if (n === 1) return [0];
+  const out = [];
+  if (r % 2 === 1) for (let i = n - 2; i >= 0; i--) out.push(i);
+  else for (let i = r === 0 ? 0 : 1; i < n; i++) out.push(i);
+  return out;
+}
 
 // ---------- 半周に語を詰める（しりとり） ----------
-// 半周 k（φ = kπ〜(k+1)π）の弧の長さから区切りの幅を引いたものが、字を並べられる長さ A。
-// 字の間隔を 0.9〜1.15 字のあいだで伸び縮みさせてよいので、語の字数の合計 N は ceil(A/1.15)〜floor(A/0.9) ならよい（A に近いほどよい）
-const SP_MIN = 0.9, SP_MAX = 1.15, MIN_PIECE = 12; // 途中の語のあとに残す字数の下限（半端な字数を残さない）
-const state = { k: 0, chars: [], words: [], shown: 0, used: new Set(), prev: null, restarts: 0, reused: 0, exact: 0, halfTurns: 0 };
-// chars：{x, y, ang, w（何番目の語か）, j（語の中の何字目か）}、words：{i, start（chars の何番目から）, chained, pulseAt}
+// 半周の弧の長さから区切りの幅を引いたものが、字を並べられる長さ A。字の間隔を SP_MIN〜SP_MAX で伸び縮みさせてよいので、
+// 語の字数の合計 N は ceil(A/SP_MAX)〜floor(A/SP_MIN) ならよい（A に近いほどよい）
+const SP_MIN = 0.9, SP_MAX = 1.15, MIN_PIECE = 12; // 途中の語のあとに残す字数の下限
+// visit：半周を1回書くこと {bar（半周の番号）, round, rev, start, end（chars の通し番号）, words, chars, layer, entered, superseded, old}
+// word：{i, e, visit, start, prev（前の語）, chained, pulseAt, path, linked（焼いた）}
+// char：{x, y, r, phi, s（弧の長さ）, ang, wd, j}
+const state = {};
+function clearState() {
+  Object.assign(state, {
+    round: 0, seqPos: 0, curRound: 0,
+    chars: [], cBase: 0,      // chars[q - cBase]。焼き付けが済んだ古い字は捨てる（半周ごとの visit.chars には残る）
+    words: [], wBase: 0,
+    visits: [], shown: 0, used: new Set(), prev: null,
+    bars: 0, exact: 0, multi: 0, reused: 0, restarts: 0,
+  });
+}
+const chAt = (q) => state.chars[q - state.cBase];
+const total = () => state.cBase + state.chars.length;
 
 const candidates = (head, len, reuse) =>
   (inv.get(key(head, len)) || []).filter((i) => reuse || !state.used.has(i));
@@ -157,7 +187,6 @@ function pickFresh(lens) {
   }
   return -1;
 }
-// target に近い順に、[lo, hi] の字数を並べる
 function lensNear(target, lo, hi) {
   const out = [];
   for (let d = 0; d <= hi - lo + Math.abs(target); d++) {
@@ -168,10 +197,13 @@ function lensNear(target, lo, hi) {
 }
 const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
-function planHalfTurn() {
-  const k = state.k++;
-  const s0 = geo.S(k * Math.PI), s1 = geo.S((k + 1) * Math.PI);
-  const A = s1 - s0 - geo.split;
+function planVisit() {
+  const n = geo.halves.length;
+  let seq = roundSeq(state.round, n);
+  if (state.seqPos >= seq.length) { state.round++; state.seqPos = 0; seq = roundSeq(state.round, n); }
+  const bi = seq[state.seqPos++], hf = geo.halves[bi];
+  const rev = state.round % 2 === 1 && n > 1;
+  const A = hf.s1 - hf.s0 - geo.split;
   const nMin = Math.ceil(A / SP_MAX), nMax = Math.floor(A / SP_MIN), n0 = Math.round(A);
   const picked = []; // {i, chained}
   let sum = 0;
@@ -193,7 +225,7 @@ function planHalfTurn() {
       i = pickChained(prev.tail, fin, true);
       if (i >= 0) { push(i, true); state.reused++; break; }
     }
-    // 4) しりとりを切って、ランダムな語から（次の周回で）やり直す
+    // 4) しりとりを切って、ランダムな語から
     state.prev = null; state.restarts++;
   }
   function push(i, chained) {
@@ -203,306 +235,409 @@ function planHalfTurn() {
     state.prev = E[i];
     sum += E[i].len;
   }
-  if (!sum) return; // ありえないが念のため（何も置けない半周は空ける）
-  // 字の位置：半周の始めから区切りの半分あけ、間隔 sp で並べる
-  const sp = A / sum;
-  let s = s0 + geo.split / 2 + sp / 2, phi = k * Math.PI;
+  if (picked.length > 1) state.multi++;
+  state.bars++;
+  // 字の位置：半周の始めから区切りの半分あけ、間隔 sp で並べる。内へ向かう周回は半周の終わりから逆向きに
+  const visit = { bar: bi, round: state.round, rev, s0: hf.s0, s1: hf.s1, start: total(), end: 0, words: [], chars: [],
+    layer: state.round % 2, entered: false, superseded: false, old: null };
+  const sp = sum ? A / sum : 1, dir = rev ? -1 : 1;
+  let s = rev ? hf.s1 - geo.split / 2 - sp / 2 : hf.s0 + geo.split / 2 + sp / 2;
+  let phi = (bi + (rev ? 1 : 0)) * Math.PI;
   for (const p of picked) {
-    const w = state.words.length;
-    state.words.push({ i: p.i, start: state.chars.length, chained: p.chained, pulseAt: null });
-    for (let j = 0; j < E[p.i].len; j++, s += sp) {
+    const prevWord = state.words.length ? state.words[state.words.length - 1] : null;
+    const wd = { i: p.i, e: E[p.i], visit, start: total(), prev: prevWord, chained: p.chained && !!prevWord, pulseAt: null, path: undefined, linked: false };
+    if (prevWord) prevWord.next = wd;
+    state.words.push(wd);
+    visit.words.push(wd);
+    for (let j = 0; j < wd.e.len; j++, s += dir * sp) {
       phi = geo.phiAt(s, phi);
       const pt = pointAt(phi);
-      state.chars.push({ x: pt.x, y: pt.y, r: pt.r, phi, ang: pt.ang, w, j });
+      const ch = { x: pt.x, y: pt.y, r: pt.r, phi, s, ang: pt.ang + (rev ? Math.PI : 0), wd, j };
+      state.chars.push(ch);
+      visit.chars.push(ch);
     }
   }
-  state.halfTurns++;
+  visit.end = total();
+  state.visits.push(visit);
 }
 
 // ---------- 開始・リセット ----------
-let scale = 18, fadeAt = null, flowAt = 0;
+const barCur = [];  // 半周ごとに、いま見えている visit
+let layers = null;   // 周回の偶奇ごとの透明なキャンバス（焼き付け）。いまの周回は濃く、前の周回は OLD_ALPHA で貼る
+let bakeUpto = 0, linkUpto = 0, styleKey = "";
+function newLayer() {
+  const dpr = window.devicePixelRatio || 1;
+  const cv = document.createElement("canvas");
+  cv.width = Math.round(geo.W * dpr); cv.height = Math.round(geo.H * dpr);
+  return { canvas: cv, ctx: cv.getContext("2d"), dpr };
+}
 function reset() {
-  geo = makeGeo();
-  Object.assign(state, { k: 0, chars: [], words: [], shown: 0, used: new Set(), prev: null, restarts: 0, reused: 0, exact: 0, halfTurns: 0 });
-  scale = params.size;
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  geo = makeGeo(W, H);
+  clearState();
+  barCur.length = 0;
+  layers = [newLayer(), newLayer()];
+  bakeUpto = 0; linkUpto = 0; styleKey = styleOf();
   fadeAt = null;
-  bake = null; nextBake = null;
+}
+let fadeAt = null;
+
+// ---------- 半周に入る（上書きの始まり）・周回の始まり ----------
+// 半周 k の字の帯（中心線から ±0.56 字。すき間のしりとり線には届かない）
+function bandPath(c, k, ox, oy, cell, h = 0.56) {
+  const N = 64;
+  c.beginPath();
+  for (let i = 0; i <= N; i++) {
+    const phi = (k + i / N) * Math.PI, r = geo.r0 + geo.b * phi + h;
+    c.lineTo(ox + r * Math.cos(phi) * cell, oy + r * Math.sin(phi) * cell);
+  }
+  for (let i = N; i >= 0; i--) {
+    const phi = (k + i / N) * Math.PI, r = Math.max(0, geo.r0 + geo.b * phi - h);
+    c.lineTo(ox + r * Math.cos(phi) * cell, oy + r * Math.sin(phi) * cell);
+  }
+  c.closePath();
+}
+function eraseBand(L, k) {
+  const c = L.ctx;
+  c.save();
+  c.setTransform(L.dpr, 0, 0, L.dpr, 0, 0);
+  c.globalCompositeOperation = "destination-out";
+  c.fillStyle = "#000";
+  bandPath(c, k, geo.ox, geo.oy, geo.cell);
+  c.fill();
+  c.restore();
+}
+// しりとり線を消す（同じ道を太めの線で抜く）
+function eraseLink(wd) {
+  if (!wd || !wd.linked || !wd.path) return;
+  const L = layers[wd.visit.layer];
+  L.ctx.save();
+  L.ctx.globalCompositeOperation = "destination-out";
+  strokePath(L.ctx, wd.path, geo.ox, geo.oy, geo.cell, L.dpr, 1, 1, "#000", 2);
+  L.ctx.restore();
+  wd.linked = false;
+}
+// visit の字と線を、いまの層から消す
+function eraseVisit(v) {
+  eraseBand(layers[v.layer], v.bar);
+  for (const wd of v.words) eraseLink(wd);
+  // この半周の最後の語から次の半周へ伸びる線（頭のある次の語の持ち物）も消す
+  const lastW = v.words[v.words.length - 1];
+  eraseLink(lastW && lastW.next);
+}
+// visit の焼き付け済みの字と線を、その層に描く
+function drawVisitBaked(v) {
+  const L = layers[v.layer];
+  for (const ch of v.chars) if (ch.wd.start + ch.j < bakeUpto) drawChar(L.ctx, ch, geo.ox, geo.oy, geo.cell, L.dpr);
+  if (params.link) for (const wd of v.words) if (wd.linkedOnce && linkOK(wd)) { strokePath(L.ctx, pathOf(wd), geo.ox, geo.oy, geo.cell, L.dpr, 1, 1); wd.linked = true; }
+}
+function enterVisit(v) {
+  v.entered = true;
+  if (v.round > state.curRound) startRound(v.round);
+  const old = barCur[v.bar];
+  if (old) { old.superseded = true; eraseVisit(old); v.old = old; }
+  barCur[v.bar] = v;
+}
+function startRound(r) {
+  state.curRound = r;
+  // 2つ前の周回の字がまだ残っている半周（前の周回が書かなかった折り返しの半周）は、前の周回の層へ移す（薄く見せる）
+  for (const v of barCur) {
+    if (v && v.round <= r - 2 && v.layer === r % 2) {
+      eraseVisit(v);
+      v.layer = (r + 1) % 2;
+      drawVisitBaked(v);
+    }
+  }
 }
 
-// ---------- 表示 ----------
-// 速さのため、古い字（最新の LIVE 字より前）は「焼き付け」用の別キャンバスに一度だけ描き、毎フレームはその画像を
-// いまの縮尺で貼るだけにする。最新の LIVE 字だけを1字ずつ描く。字が増えても1フレームの手間はほぼ一定。
-// 渦が縮んで画像が焼いたときの75%より小さくなったら、いまの縮尺で焼き直す（数フレームに分けて描き、終わったら差し替える）。
-const canvas = $("c"), ctx = canvas.getContext("2d");
-let last = performance.now(), statusAt = 0, drawMs = 0;
-const drawHist = []; // 直近60フレームの描く時間（ms）
-const PULSE_MS = 600, FADE_MS = 1800;
-const LIVE = 400;          // 1字ずつ描く最新の字の数（強調・カーソルはこの範囲で起きる）
-const REBAKE_AT = 0.75;    // 焼いたときの縮尺のこの割合まで縮んだら焼き直す
-const BAKE_PER_FRAME = 250; // 焼き付けに1フレームで描く字の数（1字あたり数十µs。多いと焼き直しのあいだ引っかかる）
+// ---------- 進める ----------
+const LIVE = 400;            // 1字ずつ描く最新の字の数
+const BAKE_PER_FRAME = 300;  // 焼き付けに1フレームで描く字の数
+const PULSE_MS = 600, LINK_MS = 450;
 const pulseAmount = (at, now) => {
   if (at === null || now - at >= PULSE_MS) return 0;
   const t = (now - at) / PULSE_MS;
   return t < 0.6 ? 1 : 1 - (t - 0.6) / 0.4;
 };
-
-function update(now, dt, W, H) {
-  if (!running) return;
-  while (state.chars.length - state.shown < 400) planHalfTurn();
-  state.shown = Math.min(state.chars.length, state.shown + params.speed * dt);
-  // 書いている字が、余白の内側の円にちょうど収まるように縮める（最初は FONT_SIZE のまま）
-  const R = Math.min(W, H) / 2 - Math.round(Math.min(W, H) * params.margin / 100);
-  const head = state.chars[Math.min(state.chars.length - 1, Math.floor(state.shown))];
-  const want = Math.min(params.size, R / (head.r + 1));
-  scale += (want - scale) * Math.min(1, dt * 2);
-  if (fadeAt === null && scale < params.minSize) fadeAt = now;
-  if (fadeAt !== null && now - fadeAt > FADE_MS) reset();
-  if (now - statusAt > 500) {
-    statusAt = now;
-    setStatus(`TURNS ${(state.halfTurns / 2).toFixed(1)}  WORDS ${state.words.length}  CHARS ${Math.floor(state.shown)}\nSIZE ${scale.toFixed(1)}px  DRAW ${drawMs.toFixed(1)}ms (MAX ${Math.max(0, ...drawHist).toFixed(0)})\nEXACT ${Math.round((100 * state.exact) / (state.halfTurns || 1))}%  REUSE ${state.reused}  RESTART ${state.restarts}`);
-  }
-}
-
-// 字の見た目（色・かっこ）
-const glyphOf = (ch, e) => (ch.j === 0 ? params.bracket[0] : ch.j === e.headLen - 1 ? params.bracket[1] : e.text[ch.j]);
-// chars[from, to) を c に描く。世界座標の原点を (ox, oy)（css px）に、字1つを cell px にして。強調はここでは描かない
-function drawChars(c, from, to, ox, oy, cell, dpr, alpha) {
-  const ink = params.inkColor, muted = mix(ink, params.bgColor, 0.55);
-  c.font = `${cell * 0.9}px "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif`;
-  c.textAlign = "center";
-  c.textBaseline = "middle";
-  c.globalAlpha = alpha;
-  const small = cell < 3; // 小さすぎる字は点で描く（速さのため）
-  for (let q = from; q < to; q++) {
-    const ch = state.chars[q], e = E[state.words[ch.w].i];
-    const X = ox + ch.x * cell, Y = oy + ch.y * cell;
-    c.fillStyle = params.headEm && ch.j >= e.headLen ? muted : ink;
-    if (small) {
-      c.setTransform(dpr, 0, 0, dpr, 0, 0);
-      c.globalAlpha = alpha * 0.5;
-      c.fillRect(X - cell * 0.3, Y - cell * 0.3, cell * 0.6, cell * 0.6);
-      c.globalAlpha = alpha;
-      continue;
-    }
-    const co = Math.cos(ch.ang), si = Math.sin(ch.ang);
-    c.setTransform(dpr * co, dpr * si, -dpr * si, dpr * co, dpr * X, dpr * Y);
-    c.fillText(glyphOf(ch, e), 0, 0);
-  }
-  c.setTransform(dpr, 0, 0, dpr, 0, 0);
-  c.globalAlpha = 1;
-}
-
-// 焼き付け：{canvas, ctx, scale（焼いたときの px/字）, half（キャンバスの半径 css px）, R（作ったときの画面の半径）, upto（焼いた字の数）, dpr}
-let bake = null, nextBake = null, bakeKey = "";
-function newBake(cellScale, R, dpr) {
-  const half = Math.ceil((R / REBAKE_AT) * 1.1 + cellScale * 2); // この先 REBAKE_AT まで縮むあいだに増える外周も入る大きさ
-  const cv = document.createElement("canvas");
-  cv.width = cv.height = Math.ceil(2 * half * dpr);
-  return { canvas: cv, ctx: cv.getContext("2d"), scale: cellScale, half, R, upto: 0, linkUpto: 1, dpr };
-}
-// 焼き付けを進める。どの描き足しも1フレームに BAKE_PER_FRAME 字まで（一度に全部描くと止まって見える）
-function bakeStep(b, target, now) {
-  if (b.upto < target) {
-    const to = Math.min(target, b.upto + BAKE_PER_FRAME);
-    drawChars(b.ctx, b.upto, to, b.half, b.half, b.scale, b.dpr, 1);
-    b.upto = to;
-  }
-  // しりとり線は、頭のかなが焼き付け済みで、伸びきったものから焼く（語の順に）
-  while (b.linkUpto < state.words.length) {
-    const wd = state.words[b.linkUpto];
-    if (wd.start + E[wd.i].headPos >= b.upto) break;
-    if (wd.pulseAt !== null && now - wd.pulseAt < LINK_MS) break;
-    if (params.link && wd.chained) drawLink(b.ctx, b.linkUpto, b.half, b.half, b.scale, b.dpr, 1, 1);
-    b.linkUpto++;
-  }
-}
-function updateBake(W, H, dpr, now) {
-  // 色・かっこ・見出しの濃さ・渦の形が変わったら作り直す（窓の大きさは含めない：大きさが変わるたびに作り直すと重い）
-  const key = [params.inkColor, params.bgColor, params.bracket, params.headEm, params.link, params.lineColor, dpr, geo && geo.b].join("|");
-  const R = Math.min(W, H) / 2;
-  const target = Math.max(0, Math.floor(state.shown) - LIVE);
-  if (!bake || key !== bakeKey || target < bake.upto) { bakeKey = key; bake = newBake(scale, R, dpr); nextBake = null; }
-  bakeStep(bake, target, now);
-  // 縮んで画像が粗くなる手前、または窓が焼いたときより大きくなったら、いまの縮尺で焼き直す（できるまでは今の画像を使う）
-  if (!nextBake && (scale < bake.scale * REBAKE_AT || R > bake.R * 1.05)) nextBake = newBake(scale, R, dpr);
-  if (nextBake) {
-    bakeStep(nextBake, target, now);
-    if (nextBake.upto >= target) { bake = nextBake; nextBake = null; }
-  }
-}
-
-// ---------- しりとり線（SHIRITORI_LINE） ----------
-// どの語どうしも同じ決まりでつなぐ：前の語の尻のかなの下（渦の内側）から、内側の巻きとのすき間に入り、
-// すき間に沿って渦と同じ向きに進み、次の語の頭のかなの下へ上がる。すき間は字の並ぶ巻きと巻きのあいだなので、ほかの字にぶつからない。
-// 中心を横切る区切り（φ＝kπ）は、線はそのまま通る（途切れさせない。ユーザーの指示）
-const LINK_MS = 450;  // 線が伸びきるまでの時間
-const LINK_STEP = 0.3; // すき間に沿って点を置く間隔（字）
-function linkPath(w) {
-  const wd = state.words[w];
-  if (wd.link) return wd.link;
-  const pw = state.words[w - 1], e = E[wd.i], pe = E[pw.i];
-  const T = state.chars[pw.start + pe.tailPos], Hd = state.chars[wd.start + e.headPos];
-  const BOTTOM = 0.45;                                           // 字の中心から字の下（内側）まで
-  const rc = (phi) => geo.r0 + geo.b * phi - geo.pitch / 2;      // すき間の中心の半径
-  const at = (phi, r) => [r * Math.cos(phi), r * Math.sin(phi)];
-  const lines = [];
-  let cur = [at(T.phi, T.r - BOTTOM)];
-  for (let phi = T.phi; ; ) {
-    cur.push(at(phi, rc(phi)));
-    if (phi >= Hd.phi) break;
-    phi = Math.min(Hd.phi, phi + LINK_STEP / Math.max(0.5, rc(phi)));
-  }
-  cur.push(at(Hd.phi, Hd.r - BOTTOM));
-  lines.push(cur);
-  // 長さ（伸びる動きのため）
-  wd.link = lines.map((pts) => {
-    let len = 0;
-    for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
-    return { pts, len };
-  });
-  return wd.link;
-}
-// 語 w の線を、全長の grow（0〜1）まで描く
-function drawLink(c, w, ox, oy, cell, dpr, alpha, grow) {
-  const parts = linkPath(w);
-  let rest = parts.reduce((a, p) => a + p.len, 0) * grow;
-  c.setTransform(dpr, 0, 0, dpr, 0, 0);
-  c.globalAlpha = alpha;
-  c.strokeStyle = params.lineColor;
-  c.lineWidth = Math.max(1, cell * 0.06);
-  c.lineJoin = "round"; c.lineCap = "butt";
-  for (const { pts } of parts) {
-    if (rest <= 0) break;
-    c.beginPath();
-    c.moveTo(ox + pts[0][0] * cell, oy + pts[0][1] * cell);
-    for (let i = 1; i < pts.length && rest > 0; i++) {
-      const seg = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
-      const t = Math.min(1, rest / (seg || 1));
-      c.lineTo(ox + (pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t) * cell, oy + (pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t) * cell);
-      rest -= seg;
-    }
-    c.stroke();
-  }
-  c.globalAlpha = 1;
-}
-
-// しりとりの強調を上から重ねる（白黒反転）。焼き付けた字にも効く
-function drawPulses(c, cx, cy, cell, dpr, alpha, now) {
-  const ink = params.inkColor, bg = params.bgColor;
-  const box = (q, amt) => {
-    const ch = state.chars[q], e = E[state.words[ch.w].i];
-    const co = Math.cos(ch.ang), si = Math.sin(ch.ang);
-    c.setTransform(dpr * co, dpr * si, -dpr * si, dpr * co, dpr * (cx + ch.x * cell), dpr * (cy + ch.y * cell));
-    c.globalAlpha = alpha * amt;
-    c.fillStyle = ink; c.fillRect(-cell * 0.55, -cell * 0.5, cell * 1.1, cell);
-    c.fillStyle = bg; c.fillText(glyphOf(ch, e), 0, 0);
-  };
-  c.font = `${cell * 0.9}px "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif`;
-  c.textAlign = "center"; c.textBaseline = "middle";
-  for (let w = state.words.length - 1; w >= 1; w--) {
-    const wd = state.words[w];
-    if (wd.start > state.shown) continue;
-    if (wd.pulseAt !== null && now - wd.pulseAt > PULSE_MS * 2) break; // 古い語はもう強調していない
-    const amt = pulseAmount(wd.pulseAt, now);
-    if (!amt || !wd.chained) continue;
-    const e = E[wd.i], pw = state.words[w - 1], pe = E[pw.i];
-    box(wd.start + e.headPos, amt);
-    box(pw.start + pe.tailPos, amt);
-  }
-  c.setTransform(dpr, 0, 0, dpr, 0, 0);
-  c.globalAlpha = 1;
-}
-
-// 描く。live=false（スクリーンショット）はフェード・カーソル・強調なしで、全部の字をその場で描く（焼き付けを使わない）
-function draw(c, W, H, now, live, dpr) {
-  const ink = params.inkColor, bg = params.bgColor;
-  c.setTransform(dpr, 0, 0, dpr, 0, 0);
-  c.globalAlpha = 1;
-  c.fillStyle = bg;
-  c.fillRect(0, 0, W, H);
-  const cx = W / 2, cy = H / 2;
-  const alpha = live && fadeAt !== null ? Math.max(0, 1 - (now - fadeAt) / FADE_MS) : 1;
-  const cell = scale;
-
-  if (params.guide && state.k > 0) {
-    c.globalAlpha = 0.25 * alpha; c.strokeStyle = ink; c.lineWidth = 1;
-    c.beginPath();
-    for (let phi = 0; phi <= state.k * Math.PI; phi += 0.05) {
-      const p = pointAt(phi);
-      phi ? c.lineTo(cx + p.x * cell, cy + p.y * cell) : c.moveTo(cx + p.x * cell, cy + p.y * cell);
-    }
-    c.stroke();
-    c.globalAlpha = 1;
-  }
-
-  const n = Math.floor(state.shown);
-  if (!live) {
-    drawChars(c, 0, n, cx, cy, cell, dpr, 1);
-    if (params.link) for (let w = 1; w < state.words.length; w++) {
-      const wd = state.words[w];
-      if (wd.chained && wd.start + E[wd.i].headPos < n) drawLink(c, w, cx, cy, cell, dpr, 1, 1);
-    }
+let statusAt = 0, drawMs = 0, resizeAt = 0;
+const drawHist = [];
+function update(now, dt) {
+  if (!geo.halves.length) {
+    if (now - statusAt > 500) { statusAt = now; setStatus("画面が小さすぎる（最初の半周が入らない）"); }
     return;
   }
-
+  if (running) {
+    while (total() - state.shown < 400) planVisit();
+    state.shown = Math.min(total(), state.shown + params.speed * dt);
+  }
+  const n = Math.floor(state.shown);
+  // 書き始めた半周に入る（前の周回の字を層から消し、残りはカーソルの先だけ1字ずつ描く）
+  for (const v of state.visits) {
+    if (v.entered) continue;
+    if (v.start >= n) break;
+    enterVisit(v);
+  }
   // 頭のかなが書かれた語に、強調の始まりの時刻を付ける
   for (let w = state.words.length - 1; w >= 0; w--) {
     const wd = state.words[w];
-    if (wd.start + E[wd.i].len < n - LIVE) break;
-    if (wd.chained && wd.pulseAt === null && n > wd.start + E[wd.i].headPos) wd.pulseAt = now;
+    if (wd.start + wd.e.len < n - LIVE) break;
+    if (wd.chained && wd.pulseAt === null && n > wd.start + wd.e.headPos) wd.pulseAt = now;
   }
-  // 焼き付けた画像をいまの縮尺で貼り、最新の字だけ1字ずつ描く
-  updateBake(W, H, dpr, now);
-  const k = cell / bake.scale;
-  c.setTransform(1, 0, 0, 1, 0, 0);
-  c.globalAlpha = alpha;
-  c.drawImage(bake.canvas, (cx - bake.half * k) * dpr, (cy - bake.half * k) * dpr, 2 * bake.half * k * dpr, 2 * bake.half * k * dpr);
+  bake(n, now);
+  trim(n);
+  if (now - statusAt > 500) {
+    statusAt = now;
+    const nh = geo.halves.length, v = currentVisit(n);
+    const dir = state.curRound % 2 ? "IN" : "OUT";
+    const lenOf = (h) => (h.s1 - h.s0 - geo.split).toFixed(0);
+    setStatus(`ROUND ${state.curRound} ${dir}  HALF ${v ? v.bar + 1 : 0}/${nh}  CHARS ${n}\nTURNS ${(nh / 2).toFixed(1)}  LEN ${lenOf(geo.halves[0])}→${lenOf(geo.halves[nh - 1])}  DRAW ${drawMs.toFixed(1)}ms (MAX ${Math.max(0, ...drawHist).toFixed(0)})\nEXACT ${Math.round((100 * state.exact) / (state.bars || 1))}%  MULTI ${state.multi}  REUSE ${state.reused}  RESTART ${state.restarts}`);
+  }
+}
+function currentVisit(n) {
+  for (let k = state.visits.length - 1; k >= 0; k--) if (state.visits[k].entered) return state.visits[k];
+  return null;
+}
+// 焼き付け：最新の LIVE 字より古い字を、その周回の層に一度だけ描く。上書きされた（superseded）半周の字は焼かない
+function bake(n, now) {
+  const key = styleOf();
+  if (key !== styleKey) { styleKey = key; rebuild(); }
+  const target = Math.max(0, n - LIVE);
+  const to = Math.min(target, bakeUpto + BAKE_PER_FRAME);
+  for (; bakeUpto < to; bakeUpto++) {
+    const ch = chAt(bakeUpto), v = ch.wd.visit;
+    if (v.superseded) continue;
+    const L = layers[v.layer];
+    drawChar(L.ctx, ch, geo.ox, geo.oy, geo.cell, L.dpr);
+  }
+  // しりとり線は、頭のかなが焼かれ、伸びきったものから焼く（語の順に）
+  while (linkUpto < state.wBase + state.words.length) {
+    const wd = state.words[linkUpto - state.wBase];
+    if (wd.start + wd.e.headPos >= bakeUpto) break;
+    if (wd.pulseAt !== null && now - wd.pulseAt < LINK_MS) break;
+    wd.linkedOnce = true;
+    if (params.link && linkOK(wd) && !wd.visit.superseded) {
+      const L = layers[wd.visit.layer];
+      strokePath(L.ctx, pathOf(wd), geo.ox, geo.oy, geo.cell, L.dpr, 1, 1);
+      wd.linked = true;
+    }
+    linkUpto++;
+  }
+}
+// 色・かっこ・見出しの濃さ・線が変わったら、層を描き直す
+const styleOf = () => [params.inkColor, params.bgColor, params.bracket, params.headEm, params.link, params.lineColor, window.devicePixelRatio || 1].join("|");
+function rebuild() {
+  if ((window.devicePixelRatio || 1) !== layers[0].dpr) layers = [newLayer(), newLayer()];
+  for (const L of layers) { L.ctx.setTransform(1, 0, 0, 1, 0, 0); L.ctx.clearRect(0, 0, L.canvas.width, L.canvas.height); }
+  for (const v of barCur) if (v) drawVisitBaked(v);
+}
+// 焼き終えた古い字・語を捨てる（半周ごとの visit には残る）
+function trim(n) {
+  const cut = Math.min(bakeUpto, n - LIVE) - 200;
+  if (cut - state.cBase > 3000) { state.chars.splice(0, cut - state.cBase); state.cBase = cut; }
+  let k = 0;
+  while (k < state.words.length - 50 && state.words[k].start + state.words[k].e.len < cut && state.wBase + k < linkUpto) k++;
+  if (k > 500) { state.words.splice(0, k); state.wBase += k; }
+  let m = 0;
+  while (m < state.visits.length - 1 && state.visits[m].entered && state.visits[m].end < cut) m++;
+  if (m > 50) state.visits.splice(0, m);
+}
+
+// ---------- 描く ----------
+const FONT = (cell) => `${cell * 0.9}px "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif`;
+const glyphOf = (ch) => (ch.j === 0 ? params.bracket[0] : ch.j === ch.wd.e.headLen - 1 ? params.bracket[1] : ch.wd.e.text[ch.j]);
+function drawChar(c, ch, ox, oy, cell, dpr, color) {
+  c.font = FONT(cell);
+  c.textAlign = "center"; c.textBaseline = "middle";
+  c.fillStyle = color || (params.headEm && ch.j >= ch.wd.e.headLen ? mix(params.inkColor, params.bgColor, 0.55) : params.inkColor);
+  const co = Math.cos(ch.ang), si = Math.sin(ch.ang);
+  c.setTransform(dpr * co, dpr * si, -dpr * si, dpr * co, dpr * (ox + ch.x * cell), dpr * (oy + ch.y * cell));
+  c.fillText(glyphOf(ch), 0, 0);
   c.setTransform(dpr, 0, 0, dpr, 0, 0);
-  // 最新の LIVE 字だけ1字ずつ描く。色を変えた直後などで焼き付けが追いついていない古い字は、焼けるまで一時的に出ない（重くしないため）
-  drawChars(c, Math.max(bake.upto, n - LIVE), n, cx, cy, cell, dpr, alpha);
+}
+
+// しりとり線（どの語どうしも同じ決まり）：前の語の尻のかなの下（字の下の側）から、隣の巻きとのすき間（字の中心線から LINE_SPACE/2）に入り、
+// すき間に沿って進み、次の語の頭のかなの下へ上がる。外へ向かう周回は内側のすき間、内へ向かう周回は外側のすき間を通る。
+// すき間は字の並ぶ巻きと巻きのあいだなので、ほかの字にぶつからない。中心を横切る区切り（φ＝kπ）は、線はそのまま通る。
+// 往復の折り返し（進む向きが逆になる）では線を引かない（しりとりはつながっている。強調は出る）
+const BOTTOM = 0.45;
+const LINK_STEP = 0.3; // すき間に沿って点を置く間隔（字）
+const linkOK = (wd) => wd.chained && wd.prev && wd.prev.visit.rev === wd.visit.rev;
+function pathOf(wd) {
+  if (wd.path !== undefined) return wd.path;
+  const pv = wd.prev.visit, v = wd.visit;
+  const T = pv.chars[wd.prev.start + wd.prev.e.tailPos - pv.start], Hd = v.chars[wd.start + wd.e.headPos - v.start];
+  const side = v.rev ? 1 : -1, dir = v.rev ? -1 : 1;              // 字の下の側（外へ：内側、内へ：外側）と、φ の進む向き
+  const rc = (phi) => geo.r0 + geo.b * phi + side * geo.pitch / 2; // すき間の中心の半径
+  const at = (phi, r) => [r * Math.cos(phi), r * Math.sin(phi)];
+  const pts = [at(T.phi, T.r + side * BOTTOM)];
+  for (let phi = T.phi; ; ) {
+    pts.push(at(phi, rc(phi)));
+    if ((Hd.phi - phi) * dir <= 0) break;
+    phi += dir * Math.min(Math.abs(Hd.phi - phi), LINK_STEP / Math.max(0.5, rc(phi)));
+  }
+  pts.push(at(Hd.phi, Hd.r + side * BOTTOM));
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  return (wd.path = { pts, len });
+}
+function strokePath(c, path, ox, oy, cell, dpr, alpha, grow, color, extra = 0) {
+  const { pts, len } = path;
+  let rest = len * grow;
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.globalAlpha = alpha;
+  c.strokeStyle = color || params.lineColor;
+  c.lineWidth = Math.max(1, cell * 0.06) + extra;
+  c.lineJoin = "round"; c.lineCap = extra ? "round" : "butt";
+  c.beginPath();
+  c.moveTo(ox + pts[0][0] * cell, oy + pts[0][1] * cell);
+  for (let i = 1; i < pts.length && rest > 0; i++) {
+    const seg = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    const t = Math.min(1, rest / (seg || 1));
+    c.lineTo(ox + (pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t) * cell, oy + (pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t) * cell);
+    rest -= seg;
+  }
+  c.stroke();
+  c.globalAlpha = 1;
+}
+
+// しりとりの強調（白黒反転）を上から重ねる
+function drawPulses(c, ox, oy, cell, dpr, now) {
+  const box = (ch, amt) => {
+    const co = Math.cos(ch.ang), si = Math.sin(ch.ang);
+    c.setTransform(dpr * co, dpr * si, -dpr * si, dpr * co, dpr * (ox + ch.x * cell), dpr * (oy + ch.y * cell));
+    c.globalAlpha = amt;
+    c.fillStyle = params.inkColor; c.fillRect(-cell * 0.55, -cell * 0.5, cell * 1.1, cell);
+    c.fillStyle = params.bgColor; c.fillText(glyphOf(ch), 0, 0);
+  };
+  c.font = FONT(cell);
+  c.textAlign = "center"; c.textBaseline = "middle";
+  for (let w = state.words.length - 1; w >= 0; w--) {
+    const wd = state.words[w];
+    if (wd.start > state.shown) continue;
+    if (wd.pulseAt !== null && now - wd.pulseAt > PULSE_MS * 2) break;
+    const amt = pulseAmount(wd.pulseAt, now);
+    if (!amt || !wd.chained || wd.visit.superseded) continue;
+    const pv = wd.prev.visit;
+    box(wd.visit.chars[wd.start + wd.e.headPos - wd.visit.start], amt);
+    if (!pv.superseded) box(pv.chars[wd.prev.start + wd.prev.e.tailPos - pv.start], amt);
+  }
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.globalAlpha = 1;
+}
+
+// 書いている半周の、前の周回の字（カーソルより先のものだけ）
+function drawSweep(c, v, n, alpha, dpr) {
+  if (!v || !v.old || n >= v.end) return;
+  const next = n >= v.start ? v.chars[n - v.start] : v.chars[0];
+  const u = (ch) => (v.rev ? v.s1 - ch.s : ch.s - v.s0); // 書いている半周の進む向きに測った位置
+  const lim = u(next) - 0.5;
+  c.globalAlpha = alpha;
+  for (const ch of v.old.chars) if (u(ch) > lim) drawChar(c, ch, geo.ox, geo.oy, geo.cell, dpr);
+  c.globalAlpha = 1;
+}
+
+function drawGuide(c, alpha) {
+  c.globalAlpha = 0.25 * alpha; c.strokeStyle = params.inkColor; c.lineWidth = 1;
+  c.beginPath();
+  for (let phi = 0; phi <= geo.halves.length * Math.PI + 1e-9; phi += 0.05) {
+    const p = pointAt(phi);
+    phi ? c.lineTo(geo.ox + p.x * geo.cell, geo.oy + p.y * geo.cell) : c.moveTo(geo.ox + p.x * geo.cell, geo.oy + p.y * geo.cell);
+  }
+  c.stroke();
+  c.globalAlpha = 1;
+}
+
+// 描く（画面）
+function draw(c, W, H, now, dpr) {
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.globalAlpha = 1;
+  c.fillStyle = params.bgColor;
+  c.fillRect(0, 0, W, H);
+  if (!geo.halves.length) return;
+  if (params.guide) drawGuide(c, 1);
+  const n = Math.floor(state.shown), cur = state.curRound, cell = geo.cell;
+  const oldA = cur > 0 ? params.oldAlpha : 1;
+  // 層を貼る：前の周回（薄く）→ いまの周回
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.globalAlpha = oldA;
+  c.drawImage(layers[(cur + 1) % 2].canvas, 0, 0, W * dpr, H * dpr);
+  c.globalAlpha = 1;
+  c.drawImage(layers[cur % 2].canvas, 0, 0, W * dpr, H * dpr);
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // 書いている半周の、前の周回の字
+  const v = currentVisit(n);
+  drawSweep(c, v, n, oldA, dpr);
+  // 焼いていない最新の字
+  c.font = FONT(cell);
+  for (let q = Math.max(bakeUpto, state.cBase); q < n; q++) {
+    const ch = chAt(q), vv = ch.wd.visit;
+    if (vv.superseded) continue;
+    c.globalAlpha = vv.round === cur ? 1 : oldA;
+    drawChar(c, ch, geo.ox, geo.oy, cell, dpr);
+  }
+  c.globalAlpha = 1;
+  // まだ焼いていない線（伸びている途中のものも）
   if (params.link) {
-    for (let w = bake.linkUpto; w < state.words.length; w++) {
+    for (let w = Math.max(0, linkUpto - state.wBase); w < state.words.length; w++) {
       const wd = state.words[w];
-      if (wd.start + E[wd.i].headPos >= n) break;
-      if (wd.chained) drawLink(c, w, cx, cy, cell, dpr, alpha, wd.pulseAt === null ? 1 : Math.min(1, (now - wd.pulseAt) / LINK_MS));
+      if (wd.start + wd.e.headPos >= n) break;
+      if (!linkOK(wd) || wd.visit.superseded) continue;
+      const grow = wd.pulseAt === null ? 1 : Math.min(1, (now - wd.pulseAt) / LINK_MS);
+      strokePath(c, pathOf(wd), geo.ox, geo.oy, cell, dpr, wd.visit.round === cur ? 1 : oldA, grow);
     }
   }
-  if (cell >= 3) drawPulses(c, cx, cy, cell, dpr, alpha, now);
-
+  drawPulses(c, geo.ox, geo.oy, cell, dpr, now);
   // カーソル（点滅）
-  if (running && n < state.chars.length && Math.floor(now / 500) % 2 === 0) {
-    const ch = state.chars[n];
+  if (running && n < total() && Math.floor(now / 500) % 2 === 0) {
+    const ch = chAt(n);
     const co = Math.cos(ch.ang), si = Math.sin(ch.ang);
-    c.setTransform(dpr * co, dpr * si, -dpr * si, dpr * co, dpr * (cx + ch.x * cell), dpr * (cy + ch.y * cell));
-    c.globalAlpha = 0.35 * alpha; c.fillStyle = ink;
+    c.setTransform(dpr * co, dpr * si, -dpr * si, dpr * co, dpr * (geo.ox + ch.x * cell), dpr * (geo.oy + ch.y * cell));
+    c.globalAlpha = 0.35; c.fillStyle = params.inkColor;
     c.fillRect(-cell * 0.45, -cell * 0.45, cell * 0.9, cell * 0.9);
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
     c.globalAlpha = 1;
   }
 }
 
+const canvas = $("c"), ctx = canvas.getContext("2d");
+let last = performance.now(), sizeKey = "";
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   const dpr = window.devicePixelRatio || 1;
   const W = canvas.clientWidth, H = canvas.clientHeight;
-  if (canvas.width !== W * dpr || canvas.height !== H * dpr) { canvas.width = W * dpr; canvas.height = H * dpr; }
-  update(now, dt, W, H);
+  if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) { canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); }
+  // 窓の大きさが変わったら、落ち着いてから（0.4秒）最初から（渦の大きさが変わるので、書いたものはつながらない）
+  const sk = `${W}x${H}`;
+  if (sk !== sizeKey) { sizeKey = sk; resizeAt = now; }
+  if (geo && (W !== geo.W || H !== geo.H) && now - resizeAt > 400) reset();
+  update(now, dt);
   const t0 = performance.now();
-  draw(ctx, W, H, now, true, dpr);
+  draw(ctx, W, H, now, dpr);
   drawHist.push(performance.now() - t0);
   if (drawHist.length > 60) drawHist.shift();
-  drawMs = drawHist.reduce((a, b) => a + b, 0) / drawHist.length; // 描くのにかかった時間（直近60フレームの平均）
+  drawMs = drawHist.reduce((a, b) => a + b, 0) / drawHist.length;
   requestAnimationFrame(frame);
 }
 
 // ---------- スクリーンショット（S キー） ----------
+// 強調・カーソルなし。前の周回の字も濃く描く（はっきり読める形）
 function saveScreenshot() {
   const dpr = window.devicePixelRatio || 1;
-  const W = canvas.clientWidth, H = canvas.clientHeight;
+  const W = geo.W, H = geo.H, n = Math.floor(state.shown);
   const off = document.createElement("canvas");
   off.width = Math.round(W * dpr); off.height = Math.round(H * dpr);
-  draw(off.getContext("2d"), W, H, performance.now(), false, dpr);
+  const c = off.getContext("2d");
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.fillStyle = params.bgColor; c.fillRect(0, 0, W, H);
+  if (params.guide) drawGuide(c, 1);
+  const v = currentVisit(n);
+  drawSweep(c, v, n, 1, dpr);
+  for (const bv of barCur) {
+    if (!bv) continue;
+    for (const ch of bv.chars) if (ch.wd.start + ch.j < n) drawChar(c, ch, geo.ox, geo.oy, geo.cell, dpr);
+    if (params.link) for (const wd of bv.words) if (linkOK(wd) && wd.start + wd.e.headPos < n) strokePath(c, pathOf(wd), geo.ox, geo.oy, geo.cell, dpr, 1, 1);
+  }
   const d = new Date(), z = (x) => String(x).padStart(2, "0");
   const name = `nagori-uzu-${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.png`;
   off.toBlob((blob) => {
@@ -514,6 +649,7 @@ function saveScreenshot() {
   }, "image/png");
 }
 
+if (window.__uzuDebug) window.__uzu = { state, barCur, pulseAmount, get geo() { return geo; } };
 loadDict().then(() => {
   reset();
   running = true;
