@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nagori / Shizuku</title>
+<meta name="description" content="辞書の項目をしりとりの線でつないで吊るす。いちばん古い語から線が切れて、下へ落ちて積もっていく。">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #ffffff; }
+  body { display: flex; }
+  #stage { flex: 1; position: relative; min-width: 0; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #toggle { position: absolute; bottom: 12px; right: 12px; z-index: 2; opacity: .6;
+    font: 12px ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .04em; color: #111; background: #fff;
+    border: 1px solid #111; border-radius: 4px; padding: 4px 8px; cursor: pointer; }
+
+  /* 設定：画面中央のオーバーレイ（後ろは半透明のグレー）。Kagefumi と同じ、白地・細い黒枠・等幅・大文字の項目名 */
+  #backdrop { position: fixed; inset: 0; background: rgba(40, 40, 40, 0.45); z-index: 10; }
+  #panel { position: fixed; z-index: 11; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: min(400px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow-y: auto;
+    background: #fff; color: #111; border: 1.5px solid #111; border-radius: 6px; padding: 18px 20px 14px;
+    font: 15px/1.2 ui-monospace, "SF Mono", Menlo, monospace; }
+  #panel.hidden, #backdrop.hidden { display: none; }
+  #panel h1 { font: 26px/1 ui-monospace, "SF Mono", Menlo, monospace; margin: 0 0 6px; padding-bottom: 10px; border-bottom: 3px solid #111; }
+  #panel section { border-top: 1px solid #ccc; padding: 8px 0 6px; }
+  #panel h1 + section { margin-top: 4px; }
+  #panel .sec { font-size: 11px; color: #888; letter-spacing: .04em; margin-bottom: 6px; }
+  #panel .r { display: grid; grid-template-columns: 1fr 1.25fr 3.2em; align-items: center; gap: 10px; min-height: 28px; }
+  #panel .r .v { text-align: left; font-variant-numeric: tabular-nums; }
+  #panel input[type=range] { width: 100%; margin: 0; accent-color: #2f6fec; }
+  #panel select { font: inherit; font-size: 14px; color: #111; background: #fff; border: 1px solid #555; border-radius: 4px; padding: 2px 4px; justify-self: start; }
+  #panel input[type=checkbox] { width: 20px; height: 20px; margin: 0; accent-color: #2f6fec; justify-self: start; }
+  #panel input[type=color] { width: 44px; height: 24px; padding: 0; border: 1px solid #555; border-radius: 4px; background: none; justify-self: start; }
+  #panel button { font: inherit; font-size: 13px; color: #111; background: #fff; border: 1px solid #555; border-radius: 4px; padding: 3px 10px; cursor: pointer; justify-self: start; }
+  #status { font-size: 11px; color: #888; white-space: pre-wrap; line-height: 1.5; }
+  #credit { font-size: 10px; color: #aaa; line-height: 1.4; margin-top: 6px; }
+  #credit a { color: inherit; }
+  #log { display: none; }
+  #panel .r.off { color: #bbb; }
+  #panel input:disabled { opacity: .35; cursor: default; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="c"></canvas>
+  <button id="toggle" title="H">SETTINGS</button>
+</div>
+<div id="backdrop" class="hidden"></div>
+<div id="panel" class="hidden" role="dialog" aria-label="Settings">
+  <h1>Nagori</h1>
+  <section>
+    <div class="sec">MODE</div>
+    <div class="r"><span>MODE</span>
+      <select id="mode">
+        <option value="./">WAVE</option>
+        <option value="uzu.html">UZU</option>
+        <option value="kuruwa.html">KURUWA</option>
+        <option value="shizuku.html" selected>SHIZUKU</option>
+      </select><span></span></div>
+  </section>
+  <section>
+    <div class="sec">CHAIN</div>
+    <div class="r"><span>MIN_LEN</span><input id="minLen" type="range" min="6" max="40" step="1" value="12"><span class="v"></span></div>
+    <div class="r"><span>MAX_LEN</span><input id="maxLen" type="range" min="12" max="60" step="1" value="40"><span class="v"></span></div>
+    <div class="r"><span>CHAIN</span><input id="chain" type="range" min="1" max="12" step="1" value="5"><span class="v"></span></div>
+    <div class="r"><span>LINK_LEN</span><input id="linkLen" type="range" min="0.5" max="6" step="0.1" value="2"><span class="v"></span></div>
+    <div class="r"><span>GRAVITY</span><input id="gravity" type="range" min="0.2" max="3" step="0.1" value="1"><span class="v"></span></div>
+    <div class="r"><span>SHATTER</span><input id="shatter" type="checkbox" checked><span></span></div>
+  </section>
+  <section>
+    <div class="sec">LAYOUT</div>
+    <div class="r"><span>FONT_SIZE</span><input id="size" type="range" min="8" max="40" step="1" value="16"><span class="v"></span></div>
+    <div class="r"><span>MARGIN</span><input id="margin" type="range" min="0" max="10" step="0.5" value="2"><span class="v"></span></div>
+  </section>
+  <section>
+    <div class="sec">PLAY</div>
+    <div class="r"><span>SPEED</span><input id="speed" type="range" min="1" max="120" step="1" value="20"><span class="v"></span></div>
+    <div class="r"><span>RESET</span><button id="reset">RESET</button><span></span></div>
+  </section>
+  <section>
+    <div class="sec">STYLE</div>
+    <div class="r"><span>INK</span><input id="inkColor" type="color" value="#1e1e1e"><span class="v"></span></div>
+    <div class="r"><span>BG</span><input id="bgColor" type="color" value="#ffffff"><span class="v"></span></div>
+    <div class="r"><span>HEAD_EM</span><input id="headEm" type="checkbox" checked><span></span></div>
+    <div class="r"><span>BRACKET</span>
+      <select id="bracket">
+        <option value="【】" selected>【】</option>
+        <option value="《》">《》</option>
+        <option value="「」">「」</option>
+        <option value="『』">『』</option>
+      </select><span></span></div>
+    <div class="r"><span>SHIRITORI_LINE</span><input id="link" type="checkbox" checked><span></span></div>
+    <div class="r"><span>LINE_COLOR</span><input id="lineColor" type="color" value="#1e1e1e"><span class="v"></span></div>
+    <div class="r"><span>GUIDE</span><input id="band" type="checkbox"><span></span></div>
+  </section>
+  <section>
+    <div id="status"></div>
+    <div id="credit"></div>
+  </section>
+</div>
+<script type="module" src="shizuku.js?v=7725f3b7"></script>
+</body>
+</html>
