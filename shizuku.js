@@ -158,6 +158,7 @@ const HY = 0.46;     // 箱の半分の厚み（字）。わずかに薄くし�
 const STEP = 1 / 60;
 const PULSE_MS = 600, LINK_MS = 450, CUT_MS = 450, CUT_DELAY = 500, WAIT_MS = 300, DRAIN_MS = 1400;
 const LOWER_RATE = 8; // 吊り元の紐を伸ばす速さ（字/s）
+const HOOK_FADE_MS = 300; // 吊り元の紐が消える・現れる時間
 
 let geo = null, world = null, anchor = null, ground = null;
 let chain = [];       // 吊られている語（古い→新しい）。node：{e, i, chained, body, up:{joint, upper}, x0, y0, n, at}
@@ -296,7 +297,7 @@ function attach(now) {
   if (hook) world.destroyJoint(hook.joint);
   const ta = b.getWorldPoint(tailTop(nd.e));
   const d0 = Math.hypot(ta.x - geo.ax * S, ta.y - geo.ay * S) / S;
-  hook = { joint: rope(anchor, b, Vec2(0, 0), tailTop(nd.e), d0), node: nd, target: d0, len: d0 };
+  hook = { joint: rope(anchor, b, Vec2(0, 0), tailTop(nd.e), d0), node: nd, target: d0, len: d0, at: now };
   chain.push(nd);
   nd.inChain = true;
   if (chain.length > params.chain && cutAt === null) cutAt = now + CUT_DELAY;
@@ -529,13 +530,11 @@ function drawLinks(c, ox, oy, cell, dpr, now, live) {
   const w = Math.max(1, cell * 0.06);
   c.strokeStyle = params.lineColor;
   // 吊り元の紐（しりとり線ではないので細く薄く）
-  // 書いている語の帯（字の高さ）を横切るところは描かない
-  if (hook && hook.node.body) {
-    c.globalAlpha = 0.35;
-    const a = [geo.ax, geo.ay], b = tailPt(hook.node), hw = Math.max(0.75, w * 0.6);
-    const at = (y) => [a[0] + (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]), y];
-    if (cur && b[1] > cur.y0 + 1.1) { line(c, a, at(cur.y0 - 0.1), ox, oy, cell, dpr, hw); line(c, at(cur.y0 + 1.1), b, ox, oy, cell, dpr, hw); }
-    else line(c, a, b, ox, oy, cell, dpr, hw);
+  // 新しい語を書いているあいだは隠す（上の語と前の語をつなぐ線に見えて紛らわしいため）。書き始めで消え、付け替えたら現れる
+  const hookFade = !hook ? 0 : cur ? (live ? Math.max(0, 1 - (now - cur.at) / HOOK_FADE_MS) : 0) : (live ? Math.min(1, (now - (hook.at ?? 0)) / HOOK_FADE_MS) : 1);
+  if (hookFade > 0 && hook.node.body) {
+    c.globalAlpha = 0.35 * hookFade;
+    line(c, [geo.ax, geo.ay], tailPt(hook.node), ox, oy, cell, dpr, Math.max(0.75, w * 0.6));
   }
   c.globalAlpha = 1;
   if (!params.link) return;
