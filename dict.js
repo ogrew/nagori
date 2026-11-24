@@ -8,6 +8,18 @@
 // 一覧は dict/build_dict.py が作る web/dict.json（見出し・頭のかな・尻のかな・表示する文）。
 const $ = (id) => document.getElementById(id);
 
+// ---------- 字体 ----------
+// 作品の字は Web フォントの Noto Serif JP（Google Fonts、HTML の <link> で読み込む）で、どの端末でも同じ字形にする。
+// Google Fonts は字の範囲ごとに小さなファイルに分かれていて、使う字のファイルだけが読み込まれる。canvas では読み込みが
+// 間に合わない字は別の字体で描かれてしまうので、始める前に辞書で使う字（約3千字）をまとめて読み込んでおく。
+const FONT_FAMILY = '"Noto Serif JP", serif';
+async function loadFont(texts) {
+  if (!document.fonts) return;
+  const chars = [...new Set(texts.join("") + "【】《》「」『』（）、。ー〜")].join("");
+  const timeout = new Promise((r) => setTimeout(r, 15000)); // 遅い回線では待ちすぎず始める（届いた字から差し替わる）
+  await Promise.race([document.fonts.load(`16px "Noto Serif JP"`, chars), timeout]).catch(() => {});
+}
+
 // ---------- 設定 ----------
 const params = {};
 for (const id of ["minLen", "maxLen", "period", "margin", "size", "leading", "gap", "speed", "nEnd"]) {
@@ -160,6 +172,8 @@ async function loadDict() {
     byLen.get(e.len).push(i);
   });
   $("credit").innerHTML = `${d.source}。<a href="https://ja.wiktionary.org/" target="_blank" rel="noopener">ja.wiktionary.org</a> / <a href="https://kaikki.org/" target="_blank" rel="noopener">kaikki.org</a>`;
+  setStatus("字体を読み込み中…");
+  await loadFont(E.map((e) => e.text));
   setStatus(`辞書 ${E.length.toLocaleString()} 項目`);
 }
 
@@ -368,7 +382,7 @@ function draw(c, W, H, now, live) {
   c.fillRect(0, 0, W, H);
   c.save();
   c.beginPath(); c.rect(L.left, L.top, L.right - L.left, L.bottom - L.top); c.clip(); // 余白には何もはみ出さない
-  c.font = `${L.cell * 0.9}px "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif`;
+  c.font = `${L.cell * 0.9}px ${FONT_FAMILY}`;
   c.textAlign = "center";
   c.textBaseline = "middle";
 

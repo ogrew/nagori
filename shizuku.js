@@ -10,6 +10,17 @@ import { World, Vec2, Box, RopeJoint } from "https://cdn.jsdelivr.net/npm/planck
 
 const $ = (id) => document.getElementById(id);
 
+// ---------- 字体 ----------
+// 作品の字は Web フォントの Noto Serif JP（Google Fonts、HTML の <link> で読み込む）で、どの端末でも同じ字形にする。
+// Google Fonts は字の範囲ごとに小さなファイルに分かれていて、使う字のファイルだけが読み込まれる。canvas では読み込みが
+// 間に合わない字は別の字体で描かれ、焼き付けた字はそのまま残るので、始める前に辞書で使う字（約3千字）をまとめて読み込んでおく。
+async function loadFont(texts) {
+  if (!document.fonts) return;
+  const chars = [...new Set(texts.join("") + "【】《》「」『』（）、。ー〜")].join("");
+  const timeout = new Promise((r) => setTimeout(r, 15000)); // 遅い回線では待ちすぎず始める
+  await Promise.race([document.fonts.load(`16px "Noto Serif JP"`, chars), timeout]).catch(() => {});
+}
+
 // ---------- 設定 ----------
 const params = {};
 for (const id of ["minLen", "maxLen", "chain", "linkLen", "gravity", "size", "margin", "speed"]) {
@@ -105,6 +116,9 @@ async function loadDict() {
     headTotal.set(e.head, (headTotal.get(e.head) || 0) + 1);
   });
   $("credit").innerHTML = `${d.source}。<a href="https://ja.wiktionary.org/" target="_blank" rel="noopener">ja.wiktionary.org</a> / <a href="https://kaikki.org/" target="_blank" rel="noopener">kaikki.org</a>`;
+  setStatus("LOADING FONT…");
+  await loadFont(E.map((e) => e.text));
+  setStatus("");
 }
 
 // ---------- しりとり ----------
@@ -446,7 +460,7 @@ function update(now, dt) {
 }
 
 // ---------- 描く ----------
-const FONT = (cell) => `${cell * 0.9}px "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif`;
+const FONT = (cell) => `${cell * 0.9}px "Noto Serif JP", serif`;
 const glyphOf = (e, j) => (j === 0 ? params.bracket[0] : j === e.headLen - 1 ? params.bracket[1] : e.text[j]);
 // 語の中心と角度（字の座標）
 function poseOf(nd) {
